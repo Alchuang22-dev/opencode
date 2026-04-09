@@ -31,11 +31,13 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
 
     const currentServer = server.current
     if (!currentServer) throw new Error("No server available")
+    const defaultDirectory = (import.meta as any).env?.VITE_OPENCODE_DEFAULT_DIRECTORY as string | undefined
 
     const eventSdk = createSdkForServer({
       signal: abort.signal,
       fetch: eventFetch,
       server: currentServer.http,
+      directory: defaultDirectory,
     })
     const emitter = createGlobalEmitter<{
       [key: string]: Event
@@ -210,6 +212,7 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
       server: server.current.http,
       fetch: platform.fetch,
       throwOnError: true,
+      directory: defaultDirectory,
     })
 
     return {
@@ -222,6 +225,7 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
         return createSdkForServer({
           server: s.http,
           fetch: platform.fetch,
+          directory: opts.directory ?? defaultDirectory,
           ...opts,
         })
       },

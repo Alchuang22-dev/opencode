@@ -11,6 +11,143 @@ import { zodToJsonSchema } from "zod-to-json-schema"
 import { errors } from "../error"
 import { lazy } from "../../util/lazy"
 import { WorkspaceRoutes } from "./workspace"
+import path from "path"
+import fs from "fs/promises"
+
+const iotdbSettingsSchema = z.object({
+  iotdb_home: z.string(),
+  host: z.string().min(1),
+  port: z.coerce.number().int().min(1).max(65535),
+  user: z.string().min(1),
+  password: z.string().min(1),
+  database: z.string().min(1),
+  probe_all_confignodes: z.boolean(),
+  probe_all_ainodes: z.boolean(),
+  probe_all_datanodes: z.boolean(),
+  sql_dialect: z.enum(["tree", "table"]),
+  policy: z.object({
+    enable_table_ddl: z.boolean(),
+    enable_write_dml: z.boolean(),
+    enable_database_ddl: z.boolean(),
+    enable_timeseries_ddl: z.boolean(),
+    enable_sql_driver: z.boolean(),
+    sql_driver_mode: z.enum(["readonly", "ddl", "full"]),
+  }),
+})
+type IotdbSettings = z.infer<typeof iotdbSettingsSchema>
+
+function boolToEnv(value: boolean) {
+  return value ? "true" : "false"
+}
+
+function resolveTimeSeekRoot() {
+  if (process.env.TIMESEEK_ROOT) return path.resolve(process.env.TIMESEEK_ROOT)
+  return path.resolve(Instance.directory, "..")
+}
+
+function connectorFiles() {
+  const root = resolveTimeSeekRoot()
+  const dir = path.join(root, "connectors", "iotdb")
+  return {
+    envPath: path.join(dir, ".env"),
+    yamlPath: path.join(dir, "connection.yaml"),
+  }
+}
+
+function parseEnv(content: string) {
+  const result: Record<string, string> = {}
+  for (const raw of content.split(/\r?\n/)) {
+    const line = raw.trim()
+    if (!line || line.startsWith("#")) continue
+    const idx = line.indexOf("=")
+    if (idx <= 0) continue
+    const key = line.slice(0, idx).trim()
+    const value = line.slice(idx + 1).trim()
+    result[key] = value
+  }
+  return result
+}
+
+function asBool(value: string | undefined, fallback: boolean) {
+  if (!value) return fallback
+  const normalized = value.toLowerCase()
+  if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") return true
+  if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") return false
+  return fallback
+}
+
+async function readIotdbSettings(): Promise<IotdbSettings> {
+  const { envPath } = connectorFiles()
+  const env = await fs.readFile(envPath, "utf8").then(parseEnv)
+  return {
+    iotdb_home: env.TIMESEEK_IOTDB_HOME ?? "",
+    host: env.IOTDB_HOST ?? "127.0.0.1",
+    port: Number(env.IOTDB_PORT ?? "6667"),
+    user: env.IOTDB_USER ?? "root",
+    password: env.IOTDB_PASSWORD ?? "root",
+    database: env.IOTDB_DATABASE ?? "test",
+    probe_all_confignodes: asBool(env.TIMESEEK_IOTDB_PROBE_ALL_CONFIGNODES, false),
+    probe_all_ainodes: asBool(env.TIMESEEK_IOTDB_PROBE_ALL_AINODES, false),
+    probe_all_datanodes: asBool(env.TIMESEEK_IOTDB_PROBE_ALL_DATANODES, false),
+    sql_dialect: env.IOTDB_SQL_DIALECT === "tree" ? "tree" : "table",
+    policy: {
+      enable_table_ddl: asBool(env.IOTDB_ENABLE_TABLE_DDL, true),
+      enable_write_dml: asBool(env.IOTDB_ENABLE_WRITE_DML, true),
+      enable_database_ddl: asBool(env.IOTDB_ENABLE_DATABASE_DDL, true),
+      enable_timeseries_ddl: asBool(env.IOTDB_ENABLE_TIMESERIES_DDL, true),
+      enable_sql_driver: asBool(env.IOTDB_ENABLE_SQL_DRIVER, true),
+      sql_driver_mode:
+        env.IOTDB_SQL_DRIVER_MODE === "readonly" || env.IOTDB_SQL_DRIVER_MODE === "ddl" || env.IOTDB_SQL_DRIVER_MODE === "full"
+          ? env.IOTDB_SQL_DRIVER_MODE
+          : "full",
+    },
+  }
+}
+
+async function writeIotdbSettings(settings: IotdbSettings) {
+  const { envPath, yamlPath } = connectorFiles()
+  const envContent = [
+    `TIMESEEK_IOTDB_HOME=${settings.iotdb_home}`,
+    `IOTDB_HOST=${settings.host}`,
+    `IOTDB_PORT=${settings.port}`,
+    `IOTDB_USER=${settings.user}`,
+    `IOTDB_PASSWORD=${settings.password}`,
+    `IOTDB_DATABASE=${settings.database}`,
+    `TIMESEEK_IOTDB_PROBE_ALL_CONFIGNODES=${boolToEnv(settings.probe_all_confignodes)}`,
+    `TIMESEEK_IOTDB_PROBE_ALL_AINODES=${boolToEnv(settings.probe_all_ainodes)}`,
+    `TIMESEEK_IOTDB_PROBE_ALL_DATANODES=${boolToEnv(settings.probe_all_datanodes)}`,
+    `IOTDB_SQL_DIALECT=${settings.sql_dialect}`,
+    `IOTDB_ENABLE_TABLE_DDL=${boolToEnv(settings.policy.enable_table_ddl)}`,
+    `IOTDB_ENABLE_WRITE_DML=${boolToEnv(settings.policy.enable_write_dml)}`,
+    `IOTDB_ENABLE_DATABASE_DDL=${boolToEnv(settings.policy.enable_database_ddl)}`,
+    `IOTDB_ENABLE_TIMESERIES_DDL=${boolToEnv(settings.policy.enable_timeseries_ddl)}`,
+    `IOTDB_ENABLE_SQL_DRIVER=${boolToEnv(settings.policy.enable_sql_driver)}`,
+    `IOTDB_SQL_DRIVER_MODE=${settings.policy.sql_driver_mode}`,
+    "",
+  ].join("\n")
+
+  const yamlContent = [
+    "iotdb:",
+    `  iotdb_home: ${settings.iotdb_home}`,
+    `  host: ${settings.host}`,
+    `  port: ${settings.port}`,
+    `  user: ${settings.user}`,
+    `  database: ${settings.database}`,
+    `  probe_all_confignodes: ${boolToEnv(settings.probe_all_confignodes)}`,
+    `  probe_all_ainodes: ${boolToEnv(settings.probe_all_ainodes)}`,
+    `  probe_all_datanodes: ${boolToEnv(settings.probe_all_datanodes)}`,
+    `  sql_dialect: ${settings.sql_dialect}`,
+    "  policy:",
+    `    enable_table_ddl: ${boolToEnv(settings.policy.enable_table_ddl)}`,
+    `    enable_write_dml: ${boolToEnv(settings.policy.enable_write_dml)}`,
+    `    enable_sql_driver: ${boolToEnv(settings.policy.enable_sql_driver)}`,
+    `    sql_driver_mode: ${settings.policy.sql_driver_mode}`,
+    "",
+  ].join("\n")
+
+  await fs.writeFile(envPath, envContent, "utf8")
+  await fs.writeFile(yamlPath, yamlContent, "utf8")
+}
 
 export const ExperimentalRoutes = lazy(() =>
   new Hono()
@@ -88,7 +225,6 @@ export const ExperimentalRoutes = lazy(() =>
         )
       },
     )
-    .route("/workspace", WorkspaceRoutes())
     .post(
       "/worktree",
       describeRoute({
@@ -114,6 +250,7 @@ export const ExperimentalRoutes = lazy(() =>
         return c.json(worktree)
       },
     )
+    .route("/workspace", WorkspaceRoutes())
     .get(
       "/worktree",
       describeRoute({
@@ -265,6 +402,53 @@ export const ExperimentalRoutes = lazy(() =>
       }),
       async (c) => {
         return c.json(await MCP.resources())
+      },
+    )
+    .get(
+      "/timeseek/iotdb-settings",
+      describeRoute({
+        summary: "Get TimeSeek IoTDB settings",
+        description: "Read TimeSeek IoTDB connector settings from connectors/iotdb/.env.",
+        operationId: "experimental.timeseek.iotdb.get",
+        responses: {
+          200: {
+            description: "IoTDB settings",
+            content: {
+              "application/json": {
+                schema: resolver(iotdbSettingsSchema),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      async (c) => {
+        return c.json(await readIotdbSettings())
+      },
+    )
+    .patch(
+      "/timeseek/iotdb-settings",
+      describeRoute({
+        summary: "Update TimeSeek IoTDB settings",
+        description: "Update TimeSeek IoTDB connector settings in connectors/iotdb/.env and connection.yaml.",
+        operationId: "experimental.timeseek.iotdb.update",
+        responses: {
+          200: {
+            description: "Updated IoTDB settings",
+            content: {
+              "application/json": {
+                schema: resolver(iotdbSettingsSchema),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      validator("json", iotdbSettingsSchema),
+      async (c) => {
+        const body = c.req.valid("json")
+        await writeIotdbSettings(body)
+        return c.json(body)
       },
     ),
 )
