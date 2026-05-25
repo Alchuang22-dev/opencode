@@ -1292,6 +1292,128 @@ test("config parser preserves permission order while rejecting unknown top-level
   }
 })
 
+test("config parser accepts experimental settings panels", () => {
+  const config = ConfigParse.schema(
+    Config.Info,
+    schemaConfig({
+      experimental: {
+        settings_panels: {
+          "my-service": {
+            title: "My Service",
+            description: "Configure the local service",
+            icon: "mcp",
+            url: "http://127.0.0.1:8765/settings",
+            section: "server",
+            mode: "link",
+            enabled: true,
+          },
+        },
+      },
+    }),
+    "test",
+  )
+
+  expect(config.experimental?.settings_panels?.["my-service"]).toEqual({
+    title: "My Service",
+    description: "Configure the local service",
+    icon: "mcp",
+    url: "http://127.0.0.1:8765/settings",
+    section: "server",
+    mode: "link",
+    enabled: true,
+  })
+})
+
+test("config parser rejects invalid experimental settings panels", () => {
+  expect(() =>
+    ConfigParse.schema(
+      Config.Info,
+      schemaConfig({
+        experimental: {
+          settings_panels: {
+            "my-service": {
+              title: "My Service",
+              url: "javascript:alert(1)",
+            },
+          },
+        },
+      }),
+      "test",
+    ),
+  ).toThrow()
+
+  expect(() =>
+    ConfigParse.schema(
+      Config.Info,
+      schemaConfig({
+        experimental: {
+          settings_panels: {
+            "my-service": {
+              title: "My Service",
+              url: "https://service.example.com/settings",
+              business_config_path: "/tmp/service.yaml",
+            },
+          },
+        },
+      }),
+      "test",
+    ),
+  ).toThrow()
+})
+
+it.effect("project config can override global experimental settings panels by key", () =>
+  withConfigTree(
+    {
+      global: {
+        experimental: {
+          settings_panels: {
+            service: {
+              title: "Global Service",
+              description: "Configure the global service",
+              icon: "server",
+              url: "https://global.example.com/settings",
+              section: "desktop",
+              mode: "link",
+              enabled: true,
+            },
+            docs: {
+              title: "Docs",
+              url: "https://docs.example.com/settings",
+            },
+          },
+        },
+      },
+      project: {
+        experimental: {
+          settings_panels: {
+            service: {
+              title: "Project Service",
+              url: "http://127.0.0.1:8765/settings",
+              enabled: false,
+            },
+          },
+        },
+      },
+    },
+    Effect.gen(function* () {
+      const config = yield* Config.use.get()
+      expect(config.experimental?.settings_panels?.service).toEqual({
+        title: "Project Service",
+        description: "Configure the global service",
+        icon: "server",
+        url: "http://127.0.0.1:8765/settings",
+        section: "desktop",
+        mode: "link",
+        enabled: false,
+      })
+      expect(config.experimental?.settings_panels?.docs).toEqual({
+        title: "Docs",
+        url: "https://docs.example.com/settings",
+      })
+    }),
+  ),
+)
+
 // MCP config merging tests
 
 it.instance("project config can override MCP server enabled status", () =>

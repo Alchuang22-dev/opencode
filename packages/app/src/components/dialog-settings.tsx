@@ -1,17 +1,36 @@
-import { Component } from "solid-js"
+import { createMemo, For, type Component } from "solid-js"
 import { Dialog } from "@opencode-ai/ui/dialog"
 import { Tabs } from "@opencode-ai/ui/tabs"
 import { Icon } from "@opencode-ai/ui/icon"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
+import { useGlobalSync } from "@/context/global-sync"
 import { SettingsGeneral } from "./settings-general"
 import { SettingsKeybinds } from "./settings-keybinds"
 import { SettingsProviders } from "./settings-providers"
 import { SettingsModels } from "./settings-models"
+import {
+  externalSettingsPanelTabValue,
+  normalizeExternalSettingsPanels,
+  SettingsExternalPanel,
+  type ExternalSettingsPanelConfig,
+} from "./settings-external-panel"
 
 export const DialogSettings: Component = () => {
   const language = useLanguage()
   const platform = usePlatform()
+  const globalSync = useGlobalSync()
+  const externalPanels = createMemo(() =>
+    normalizeExternalSettingsPanels(
+      (
+        globalSync.data.config.experimental as
+          | { settings_panels?: Record<string, ExternalSettingsPanelConfig> }
+          | undefined
+      )?.settings_panels,
+    ),
+  )
+  const desktopExternalPanels = createMemo(() => externalPanels().filter((panel) => panel.section === "desktop"))
+  const serverExternalPanels = createMemo(() => externalPanels().filter((panel) => panel.section === "server"))
 
   return (
     <Dialog size="x-large" transition>
@@ -31,6 +50,14 @@ export const DialogSettings: Component = () => {
                       <Icon name="keyboard" />
                       {language.t("settings.tab.shortcuts")}
                     </Tabs.Trigger>
+                    <For each={desktopExternalPanels()}>
+                      {(panel) => (
+                        <Tabs.Trigger value={externalSettingsPanelTabValue(panel.id)}>
+                          <Icon name={panel.icon} />
+                          {panel.title}
+                        </Tabs.Trigger>
+                      )}
+                    </For>
                   </div>
                 </div>
 
@@ -45,6 +72,14 @@ export const DialogSettings: Component = () => {
                       <Icon name="models" />
                       {language.t("settings.models.title")}
                     </Tabs.Trigger>
+                    <For each={serverExternalPanels()}>
+                      {(panel) => (
+                        <Tabs.Trigger value={externalSettingsPanelTabValue(panel.id)}>
+                          <Icon name={panel.icon} />
+                          {panel.title}
+                        </Tabs.Trigger>
+                      )}
+                    </For>
                   </div>
                 </div>
               </div>
@@ -67,6 +102,13 @@ export const DialogSettings: Component = () => {
         <Tabs.Content value="models" class="no-scrollbar">
           <SettingsModels />
         </Tabs.Content>
+        <For each={externalPanels()}>
+          {(panel) => (
+            <Tabs.Content value={externalSettingsPanelTabValue(panel.id)} class="no-scrollbar">
+              <SettingsExternalPanel panel={panel} />
+            </Tabs.Content>
+          )}
+        </For>
       </Tabs>
     </Dialog>
   )

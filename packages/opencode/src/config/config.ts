@@ -18,7 +18,7 @@ import { isRecord } from "@/util/record"
 import type { ConsoleState } from "./console-state"
 import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { InstanceState } from "@/effect/instance-state"
-import { Context, Duration, Effect, Exit, Fiber, Layer, Option, Schema } from "effect"
+import { Context, Duration, Effect, Exit, Fiber, Layer, Option, Schema, SchemaGetter } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
 import { containsPath, type InstanceContext } from "../project/instance-context"
@@ -130,6 +130,71 @@ const LogLevelRef = Schema.Literals(["DEBUG", "INFO", "WARN", "ERROR"]).annotate
   identifier: "LogLevel",
   description: "Log level",
 })
+
+const ExternalSettingsPanelUrl = Schema.String.check(
+  Schema.makeFilter((value: string) => {
+    try {
+      const url = new URL(value)
+      return url.protocol === "http:" || url.protocol === "https:" || "Expected an http(s) URL"
+    } catch {
+      return "Expected a valid URL"
+    }
+  }),
+).annotate({
+  identifier: "ExternalSettingsPanelUrl",
+  description: "External settings panel URL. Only http and https URLs are supported.",
+})
+
+const ExternalSettingsPanelFields = {
+  title: Schema.String.check(Schema.isMinLength(1)).annotate({
+    description: "Display name for the settings panel.",
+  }),
+  url: ExternalSettingsPanelUrl,
+  description: Schema.optional(Schema.String).annotate({
+    description: "Optional description shown in the settings panel.",
+  }),
+  icon: Schema.optional(Schema.String).annotate({
+    description: "Optional icon name. Unknown icons fall back to a generic settings icon.",
+  }),
+  section: Schema.optional(Schema.Literals(["server", "desktop"])).annotate({
+    description: "Settings sidebar section. Defaults to server.",
+  }),
+  mode: Schema.optional(Schema.Literals(["link"])).annotate({
+    description: "How the external settings panel is opened. Only link mode is supported.",
+  }),
+  enabled: Schema.optional(Schema.Boolean).annotate({
+    description: "Set to false to hide this settings panel.",
+  }),
+}
+
+const ExternalSettingsPanelShape = Schema.Struct(ExternalSettingsPanelFields).annotate({
+  identifier: "ExternalSettingsPanel",
+  description: "Configuration for an external settings panel entry.",
+})
+
+const ExternalSettingsPanelKnownKeys = new Set(Object.keys(ExternalSettingsPanelFields))
+const ExternalSettingsPanelInput = Schema.StructWithRest(ExternalSettingsPanelShape, [
+  Schema.Record(Schema.String, Schema.Unknown),
+])
+
+const ExternalSettingsPanel = ExternalSettingsPanelInput.pipe(
+  Schema.decodeTo(ExternalSettingsPanelShape, {
+    decode: SchemaGetter.transform((input) => {
+      const extra = Object.keys(input).filter((key) => !ExternalSettingsPanelKnownKeys.has(key))
+      if (extra.length) throw new Error(`Unrecognized key${extra.length === 1 ? "" : "s"}: ${extra.join(", ")}`)
+      return {
+        title: input.title,
+        url: input.url,
+        ...(input.description !== undefined && { description: input.description }),
+        ...(input.icon !== undefined && { icon: input.icon }),
+        ...(input.section !== undefined && { section: input.section }),
+        ...(input.mode !== undefined && { mode: input.mode }),
+        ...(input.enabled !== undefined && { enabled: input.enabled }),
+      }
+    }),
+    encode: SchemaGetter.passthrough(),
+  }),
+)
 
 export const Info = Schema.Struct({
   $schema: Schema.optional(Schema.String).annotate({
@@ -300,6 +365,9 @@ export const Info = Schema.Struct({
       }),
       mcp_timeout: Schema.optional(PositiveInt).annotate({
         description: "Timeout in milliseconds for model context protocol (MCP) requests",
+      }),
+      settings_panels: Schema.optional(Schema.Record(Schema.String, ExternalSettingsPanel)).annotate({
+        description: "External settings panel entries shown in the app settings dialog.",
       }),
     }),
   ),
